@@ -1,16 +1,17 @@
 import numpy as np
 import open3d as o3d
 
-PLY_FILE = "test4.ply"
+PLY_FILE = "test4.ply"  # bestand met 3D botmodel
 
 
-# Helpers
+# Geef punten terug
 def pts(g):
     return np.asarray(
         g.vertices if isinstance(g, o3d.geometry.TriangleMesh) else g.points
     )
 
 
+# Maak een bol op positie p, met kleur c en radius r.
 def sphere(p, c, r=2.0):
     s = o3d.geometry.TriangleMesh.create_sphere(r)
     s.paint_uniform_color(c)
@@ -19,17 +20,19 @@ def sphere(p, c, r=2.0):
     return s
 
 
+# Zet het bot recht met +y omhoog.
 def align_to_y(g):
     p = pts(g)
-    g.translate(-p.mean(axis=0))
-    _, v = np.linalg.eigh(np.cov(p.T))
+    g.translate(-p.mean(axis=0))  # centrum bot op oorsprong
+    _, v = np.linalg.eigh(np.cov(p.T))  # richtingen bepalen
     axis = v[:, -1]
     if axis[1] < 0:
-        axis *= -1
+        axis *= -1  # omhoog gericht
     cross = np.cross(axis, [0, 1, 0])
     s = np.linalg.norm(cross)
-    if s < 1e-8:
+    if s < 1e-8:  # als s kleiner, = goed georiënteerd
         return g
+    # Rotatiematrix rond y.
     vx = np.array(
         [[0, -cross[2], cross[1]], [cross[2], 0, -cross[0]], [-cross[1], cross[0], 0]]
     )
@@ -38,44 +41,49 @@ def align_to_y(g):
     return g
 
 
-# Load geometry
 geom = o3d.io.read_triangle_mesh(PLY_FILE)
 if geom.has_triangles():
+    # Mesh opschonen
     geom.compute_vertex_normals()
     geom.remove_duplicated_vertices()
     geom.remove_degenerate_triangles()
     geom.paint_uniform_color([0.92, 0.92, 0.88])
 else:
+    # Point cloud
     geom = o3d.io.read_point_cloud(PLY_FILE)
     geom.estimate_normals()
 
-# Orientation
+# Uitlijnen en punten ophalen.
 geom = align_to_y(geom)
 p = pts(geom)
 
-# Lowest point
+# Laagste punt vinden.
 low = p[np.argmin(p[:, 1])]
 
-# Rotate so lowest faces +Z
+# Rotatie zodat laagste punt naar +z wijst.
 angle = np.arctan2(low[0], low[2])
 geom.rotate(geom.get_rotation_matrix_from_axis_angle([0, -angle, 0]), center=(0, 0, 0))
 p = pts(geom)
 
-# Landmarks
+# Basis grenzen
 ymin, ymax = p[:, 1].min(), p[:, 1].max()
 zmin, zmax = p[:, 2].min(), p[:, 2].max()
 x_min, x_max = p[:, 0].min(), p[:, 0].max()
 h = ymax - ymin
 
-# Bottom 15% → most left
+# LANDMARKS
+# Lister’s tubercle (blauw).
+# Laagste 15% ROI , min() van x-as.
 bottom = p[p[:, 1] <= ymin + 0.15 * h]
 left = bottom[np.argmin(bottom[:, 0])]
 
-# Top along Y-axis
+# Center of radial head/center of humeral fossa (groen).
+# Hoogste punt direct op de y-as.
 axis_pts = p[np.sqrt(p[:, 0] ** 2 + p[:, 2] ** 2) <= 1.0]
 top_axis = axis_pts[np.argmax(axis_pts[:, 1])] if len(axis_pts) else None
 
-# Radial tuberosity
+# Radial tuberosity (paars).
+# Vind het punt door een ROI te selecteren, het middelpunt van de schacht te bepalen, een 120° sector met de meeste punten te kiezen en vervolgens het verste punt van die sector te nemen.
 roi = p[(p[:, 1] >= ymax - 0.20 * h) & (p[:, 1] <= ymax - 0.08 * h)]
 shaft_xz = roi[:, [0, 2]].mean(axis=0)
 shaft = np.array([shaft_xz[0], roi[:, 1].mean(), shaft_xz[1]])
@@ -87,21 +95,24 @@ best = max(
 tub = roi[best]
 tub_pt = tub[np.argmax(np.linalg.norm(tub[:, [0, 2]] - shaft[[0, 2]], axis=1))]
 
-# Deep + low point (yellow)
+# Peak of dorsal rim on sigmoid notch (geel).
+# Ratio 80/20 van min() op de y-as en z-as om punt te vinden.
 y_norm = (p[:, 1] - ymin) / h
 z_norm = (p[:, 2] - zmin) / (zmax - zmin)
 score = 0.8 * y_norm + 0.2 * z_norm
 deep_low = p[np.argmin(score)]
 
-# Deep + low + right point (cyan)
+# Peak of volar rim on sigmoid notch (cyaan).
+# Ratio 60/25/15 van min() op de y-as, z-as en max() van x-as om punt te vinden.
 x_norm = (p[:, 0] - x_min) / (x_max - x_min)
 score_xyz = 0.6 * y_norm + 0.25 * z_norm - 0.15 * x_norm
 deep_low_right = p[np.argmin(score_xyz)]
 
-# Visualization
+# Visualisatie
 vis = o3d.visualization.Visualizer()
 vis.create_window("3D Bone Viewer", 1200, 900)
 
+# Voeg geometrie en punten toe.
 vis.add_geometry(geom)
 vis.add_geometry(sphere(low, [1, 0, 0]))  # rood
 vis.add_geometry(sphere(left, [0, 0, 1]))  # blauw
@@ -111,6 +122,7 @@ vis.add_geometry(sphere(deep_low_right, [0, 1, 1]))  # cyaan
 if top_axis is not None:
     vis.add_geometry(sphere(top_axis, [0, 1, 0]))  # groen
 
+# Render opties
 opt = vis.get_render_option()
 opt.background_color = [0.05, 0.05, 0.05]
 opt.light_on = True
