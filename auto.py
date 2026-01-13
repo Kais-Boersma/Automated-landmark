@@ -188,6 +188,13 @@ vis.add_geometry(sphere(deep_low, [1, 1, 0]))  # geel
 vis.add_geometry(sphere(deep_low_right, [0, 1, 1]))  # cyaan
 if top_axis is not None:
     vis.add_geometry(sphere(top_axis, [0, 1, 0]))  # groen
+colors = [[1,0.5,0],[0,1,0.5]]  # max 2 kuiltjes
+for i, pt in enumerate(selected_pts):
+    s = o3d.geometry.TriangleMesh.create_sphere(radius=2.5)
+    s.paint_uniform_color(colors[i])
+    s.translate(pt)
+    s.compute_vertex_normals()
+    vis.add_geometry(s)    
 
 # Render opties
 opt = vis.get_render_option()
@@ -199,5 +206,6 @@ vis.get_view_control().set_zoom(0.8)
 
 vis.run()
 vis.destroy_window()
+
 
 
