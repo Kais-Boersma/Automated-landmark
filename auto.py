@@ -1,7 +1,7 @@
 import numpy as np
 import open3d as o3d
 
-PLY_FILE = "test.ply"  # change if needed
+PLY_FILE = "test7R.ply"  # change if needed
 
 
 # -------------------------------
@@ -152,6 +152,70 @@ if axis_top_point is not None:
     sphere_top.translate(axis_top_point)
     sphere_top.compute_vertex_normals()
 
+
+
+
+# ============================================================
+# EXTRA (AANGEPAST): RADIAL TUBEROSITY — PAPER-CORRECT
+# ============================================================
+
+# --- BOVENSTE 8–20% van het bot langs Y-as ---
+# We meten vanaf Y_max (proximaal) naar beneden
+roi_high = Y_max - 0.08 * (Y_max - Y_min)  # 8% onder de top
+roi_low = Y_max - 0.20 * (Y_max - Y_min)  # 20% onder de top
+
+roi_points = points[(points[:, 1] >= roi_low) & (points[:, 1] <= roi_high)]
+# Vanaf hier bestaat het bot alleen nog uit het proximale ROI
+
+# --- Schacht-as bepalen in dit gebied ---
+# Dit is het "center of the diaphyseal part" uit de tekst
+shaft_xz = roi_points[:, [0, 2]].mean(axis=0)  # as in x,z
+shaft_y = (roi_low + roi_high) / 2  # midden van ROI
+shaft_axis_point = np.array([shaft_xz[0], shaft_y, shaft_xz[1]])
+
+# --- Richting langs het bot (Y-as is al uitgelijnd) ---
+bone_axis = np.array([0.0, 1.0, 0.0])
+
+
+# --- Hoekberekening rond de bot-as ---
+# Alles wordt rond de Y-as bekeken, zoals anatomisch logisch
+def angular_coords_y(pts, center):
+    rel = pts - center
+    return np.degrees(np.arctan2(rel[:, 2], rel[:, 0]))
+
+
+angles = angular_coords_y(roi_points, shaft_axis_point)
+# Hier laten we een stuk van 120° met stapjes van 10° om het hele bot heendraaien
+# We zoeken het stuk met de meeste punten (grootste volume)
+best_mask = None
+best_volume = 0
+
+for start in np.arange(-180, 180, 10):   
+
+    mask = (angles >= start) & (angles <= start + 120)
+    volume = np.sum(mask)  # punt-aantal ~ volume
+    if volume > best_volume:
+        best_volume = volume
+        best_mask = mask
+
+tuberosity_points = roi_points[best_mask]
+# Dit is nu het volledige tuberositas-volume
+
+# --- OPPERVLAKPUNT bepalen (GEEN centroid!) ---
+# We zoeken het punt dat het verst van de schacht-as ligt
+rel = tuberosity_points - shaft_axis_point
+radial_dist = np.sqrt(rel[:, 0] ** 2 + rel[:, 2] ** 2)
+
+surface_point = tuberosity_points[np.argmax(radial_dist)]
+# Dit punt ligt gegarandeerd op de bolling
+
+# --- Paarse sphere op correcte tuberositas-positie ---
+sphere_tuberosity = o3d.geometry.TriangleMesh.create_sphere(radius=2.5)
+sphere_tuberosity.paint_uniform_color([1.0, 0.0, 1.0])  # PAARS
+sphere_tuberosity.translate(surface_point)
+sphere_tuberosity.compute_vertex_normals()
+
+
 # -------------------------------
 # Visualization
 # -------------------------------
@@ -161,6 +225,7 @@ vis.create_window(window_name="3D Bone Viewer", width=1200, height=900)
 vis.add_geometry(geometry)
 vis.add_geometry(sphere_low)
 vis.add_geometry(sphere_left)
+vis.add_geometry(sphere_tuberosity)
 if axis_top_point is not None:
     vis.add_geometry(sphere_top)
 
@@ -175,3 +240,4 @@ ctr.set_zoom(0.8)
 
 vis.run()
 vis.destroy_window()
+
