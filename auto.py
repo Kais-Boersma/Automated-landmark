@@ -1,5 +1,6 @@
 import numpy as np
 import open3d as o3d
+from scipy.spatial import ConvexHull
 
 PLY_FILE = "test.ply"
 
@@ -106,6 +107,46 @@ tub = roi[best]
 dist = np.linalg.norm(tub[:, [0, 2]] - shaft[[0, 2]], axis=1)
 tub_pt = tub[np.argmax(dist)]
 
+
+#-----------------------------------------------------------------------------------------------
+#TEST-------------------------
+#---------------------------------
+# --- onderste 10% ---
+y0, y1 = ymin, ymin + 0.10 * (ymax - ymin)
+step = 1.0
+
+best_area = 0
+best_slice = None
+
+for y in np.arange(y0, y1, step):
+    slab = p[(p[:, 1] >= y) & (p[:, 1] < y + step)]
+    if len(slab) < 20:
+        continue
+
+    xz = slab[:, [0, 2]]  # project naar XZ-vlak
+
+    # Gebruik 2D convex hull ipv 3D hull
+    try:
+        hull_2d = ConvexHull(xz)
+        area = hull_2d.volume  # bij 2D: volume = oppervlakte
+    except Exception as e:
+        print(f"ConvexHull mislukte voor y={y}: {e}")
+        continue
+
+    if area > best_area:
+        best_area = area
+        best_slice = slab
+
+
+#----------------------------------------------------------------------------
+#----------------------------------------------------------------------------
+
+
+
+
+
+
+
 # -------------------------------
 # Visualization
 # -------------------------------
@@ -128,3 +169,4 @@ opt.point_size = 2
 vis.get_view_control().set_zoom(0.8)
 vis.run()
 vis.destroy_window()
+
