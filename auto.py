@@ -1,5 +1,6 @@
 import numpy as np
 import open3d as o3d
+from scipy.spatial import cKDTree
 
 PLY_FILE = "test4.ply"  # bestand met 3D botmodel
 
@@ -198,4 +199,5 @@ vis.get_view_control().set_zoom(0.8)
 
 vis.run()
 vis.destroy_window()
+
 
