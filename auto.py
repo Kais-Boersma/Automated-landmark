@@ -108,6 +108,72 @@ x_norm = (p[:, 0] - x_min) / (x_max - x_min)
 score_xyz = 0.6 * y_norm + 0.25 * z_norm - 0.15 * x_norm
 deep_low_right = p[np.argmin(score_xyz)]
 
+# ----------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------
+# Kuiltjes (dimples) detection
+roi_fraction = 0.10  # onderste 10% van het bot
+neighborhood_radius = 5  # radius van buurtpunten voor bolfit
+n_kuilen = 2  # aantal kuilen om terug te geven
+min_dist = 5.0  # minimale afstand tussen de spheres
+
+# --- 1. ROI: onderste 10% ---
+ymin = p[:, 1].min()
+ymax = p[:, 1].max()
+h = ymax - ymin
+y_limit = ymin + roi_fraction * h
+roi_points = p[p[:, 1] <= y_limit]
+
+print(f"Aantal punten in ROI: {len(roi_points)}")
+
+# --- 2. KD-tree voor snelle buurtzoeking ---
+tree = cKDTree(roi_points[:, [0, 2]])
+
+
+# --- 3. Functie voor bolfit in 3D ---
+def fit_sphere(points):
+    # algebraic fit: ||X-C||^2 = r^2
+    X = points[:, 0]
+    Y = points[:, 1]
+    Z = points[:, 2]
+    A = np.c_[2 * X, 2 * Y, 2 * Z, np.ones(len(X))]
+    f = X**2 + Y**2 + Z**2
+    C, residuals, _, _ = np.linalg.lstsq(A, f, rcond=None)
+    center = C[:3]
+    radius = np.sqrt(C[3] + np.sum(center**2))
+    # RMSE van de fit
+    rmse = np.sqrt(np.mean((np.linalg.norm(points - center, axis=1) - radius) ** 2))
+    return center, radius, rmse
+
+
+# --- 4. Bolfit over alle punten in ROI ---
+sphere_scores = []
+for i, pt in enumerate(roi_points):
+    idx = tree.query_ball_point([pt[0], pt[2]], neighborhood_radius)
+    if len(idx) < 5:  # niet genoeg punten om te fitten
+        continue
+    local_points = roi_points[idx]
+    center, radius, rmse = fit_sphere(local_points)
+    sphere_scores.append((pt, rmse))
+
+sphere_scores.sort(key=lambda x: x[1])  # kleinste RMSE eerst
+selected_pts = []
+
+# --- 5. Kies n_kuilen met minimale afstand ---
+for pt, score in sphere_scores:
+    if all(np.linalg.norm(pt[[0, 2]] - p[[0, 2]]) >= min_dist for p in selected_pts):
+        # pas Y aan zodat de sphere exact op het oppervlak zit
+        _, idx_mesh = cKDTree(p[:, [0, 2]]).query([pt[0], pt[2]])
+        surface_pt = np.array([pt[0], p[idx_mesh, 1], pt[2]])
+        selected_pts.append(surface_pt)
+    if len(selected_pts) >= n_kuilen:
+        break
+
+print("Geselecteerde kuilen via bolfit:", selected_pts)
+# ---------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------
+# Visualization
+
+
 # Visualisatie
 vis = o3d.visualization.Visualizer()
 vis.create_window("3D Bone Viewer", 1200, 900)
@@ -132,3 +198,4 @@ vis.get_view_control().set_zoom(0.8)
 
 vis.run()
 vis.destroy_window()
+
