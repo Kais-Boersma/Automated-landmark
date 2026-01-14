@@ -114,7 +114,7 @@ deep_low = p[np.argmin(score)]
 
 # Peak of volar rim (cyaan)
 x_norm = (p[:, 0] - x_min) / (x_max - x_min)
-score_xyz = 0.6 * y_norm + 0.25 * z_norm - 0.15 * x_norm
+score_xyz = 0.6 * y_norm + 0.15 * z_norm - 0.25 * x_norm
 deep_low_right = p[np.argmin(score_xyz)]
 
 # -----------------------------
@@ -208,3 +208,4 @@ opt.point_size = 2
 vis.get_view_control().set_zoom(0.8)
 vis.run()
 vis.destroy_window()
+
