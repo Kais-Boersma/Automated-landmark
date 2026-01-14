@@ -2,7 +2,7 @@ import numpy as np
 import open3d as o3d
 from scipy.spatial import cKDTree
 
-PLY_FILE = "test8R.ply"  # Bestand met 3D botmodel
+PLY_FILE = "test2raw.ply"  # Bestand met 3D botmodel
 
 
 # -----------------------------
@@ -67,13 +67,21 @@ else:
     geom = o3d.io.read_point_cloud(PLY_FILE)
     geom.estimate_normals()
 
-
-# -----------------------------
-# 3. Uitlijnen + punten ophalen
-# -----------------------------
 geom = align_to_y(geom)
 p = pts(geom)
 
+# --- Op-zijn-kop fix ---
+ymin, ymax = p[:, 1].min(), p[:, 1].max()
+h = ymax - ymin
+bottom = p[p[:, 1] <= ymin + 0.20 * h]
+top = p[p[:, 1] >= ymax - 0.20 * h]
+if np.std(bottom[:, [0, 2]]) < np.std(top[:, [0, 2]]):
+    geom.rotate(
+        geom.get_rotation_matrix_from_axis_angle([np.pi, 0, 0]), center=(0, 0, 0)
+    )
+    p = pts(geom)
+
+# --- Laagste punt en rotatie naar +Z ---
 low = p[np.argmin(p[:, 1])]
 angle = np.arctan2(low[0], low[2])
 geom.rotate(geom.get_rotation_matrix_from_axis_angle([0, -angle, 0]), center=(0, 0, 0))
@@ -84,18 +92,37 @@ zmin, zmax = p[:, 2].min(), p[:, 2].max()
 x_min, x_max = p[:, 0].min(), p[:, 0].max()
 h = ymax - ymin
 
-vertices = np.asarray(geom.vertices)
-normals = np.asarray(geom.vertex_normals)
+# -----------------------------
+# 2. Detecteer linker/rechterarm
+# -----------------------------
+y_norm = (p[:, 1] - ymin) / h
+z_norm = (p[:, 2] - zmin) / (zmax - zmin)
+score_full = 0.8 * y_norm + 0.2 * z_norm
+deep_low = p[np.argmin(score_full)]
+left_arm = deep_low[0] < 0
+print("Linker arm" if left_arm else "Rechter arm")
 
 # -----------------------------
-# 4. LANDMARKS
+# 3. Tijdelijke spiegel voor consistente berekeningen
 # -----------------------------
-# Lister’s tubercle (blauw)
-bottom = p[p[:, 1] <= ymin + 0.15 * h]
-left = bottom[np.argmin(bottom[:, 0])]
+p_mirror = p.copy()
+if left_arm:
+    p_mirror[:, 0] *= -1
 
-# Radial tuberosity (paars)
-roi = p[(p[:, 1] >= ymax - 0.20 * h) & (p[:, 1] <= ymax - 0.08 * h)]
+# -----------------------------
+# 4. Landmarks
+# -----------------------------
+# Blauw (Lister's tubercle) met ratio -X voorkeur
+bottom_roi = p_mirror[p_mirror[:, 1] <= ymin + 0.15 * h]
+score_blue = (bottom_roi[:, 0] - x_min) / (x_max - x_min) * 0.8 + (
+    bottom_roi[:, 2] - zmin
+) / (zmax - zmin) * 0.2
+left = bottom_roi[np.argmin(score_blue)]
+
+# Paars (Radial tuberosity)
+roi = p_mirror[
+    (p_mirror[:, 1] >= ymax - 0.20 * h) & (p_mirror[:, 1] <= ymax - 0.08 * h)
+]
 shaft_xz = roi[:, [0, 2]].mean(axis=0)
 shaft = np.array([shaft_xz[0], roi[:, 1].mean(), shaft_xz[1]])
 angles = np.degrees(np.arctan2(roi[:, 2] - shaft[2], roi[:, 0] - shaft[0]))
@@ -106,20 +133,29 @@ best = max(
 tub = roi[best]
 tub_pt = tub[np.argmax(np.linalg.norm(tub[:, [0, 2]] - shaft[[0, 2]], axis=1))]
 
-# Peak of dorsal rim (geel)
-y_norm = (p[:, 1] - ymin) / h
-z_norm = (p[:, 2] - zmin) / (zmax - zmin)
-score = 0.8 * y_norm + 0.2 * z_norm
-deep_low = p[np.argmin(score)]
+# Geel (Peak dorsal rim)
+score_yz = 0.8 * y_norm + 0.2 * z_norm
+deep_low = p[np.argmin(score_yz)]
 
-# Peak of volar rim (cyaan)
-x_norm = (p[:, 0] - x_min) / (x_max - x_min)
-score_xyz = 0.6 * y_norm + 0.15 * z_norm - 0.25 * x_norm
-deep_low_right = p[np.argmin(score_xyz)]
+# Cyaan (Peak volar rim)
+x_norm_full = (p_mirror[:, 0] - x_min) / (x_max - x_min)
+score_xyz = 0.6 * y_norm + 0.15 * z_norm - 0.25 * x_norm_full
+deep_low_right = p_mirror[np.argmin(score_xyz)]
+
+
+# Zet landmarks terug naar originele coördinaten
+if left_arm:
+    left[0] *= -1
+    tub_pt[0] *= -1
+    deep_low[0] *= -1
+    deep_low_right[0] *= -1
 
 # -----------------------------
-# 5. KUILEN onderaan
+# 5. Kuilen onderaan via bolfit
 # -----------------------------
+vertices = np.asarray(geom.vertices)
+normals = np.asarray(geom.vertex_normals)
+
 roi_fraction = 0.07
 neighborhood_radius = 6
 n_kuilen = 2
@@ -157,16 +193,13 @@ for pt, score in sphere_scores:
     if len(selected_pts) >= n_kuilen:
         break
 
-print("Geselecteerde kuilen via bolfit:", selected_pts)
-
 # -----------------------------
-# 6. BOLFIT bovenste 5%
+# 6. Bolfit bovenste 5%
 # -----------------------------
 roi_fraction_top = 0.05
 y_limit_top = ymax - roi_fraction_top * h
 top_mask = vertices[:, 1] >= y_limit_top
 top_points = vertices[top_mask][::5]
-top_normals = normals[top_mask][::5]
 
 tree_top = cKDTree(top_points[:, [0, 2]])
 sphere_scores_top = []
@@ -180,17 +213,18 @@ for i, pt in enumerate(top_points):
 sphere_scores_top.sort(key=lambda x: x[1])
 
 top_bol = sphere_scores_top[0][0] if len(sphere_scores_top) > 0 else None
-print("Bovenste bol via bolfit:", top_bol)
 
 # -----------------------------
-# 7. VISUALISATIE
+# 7. Visualisatie
 # -----------------------------
+low_vis = low.copy()
 vis = o3d.visualization.Visualizer()
 vis.create_window("3D Bone Viewer", 1200, 900)
+
 vis.add_geometry(geom)
-vis.add_geometry(sphere(low, [1, 0, 0]))  # rood
+vis.add_geometry(sphere(low_vis, [1, 0, 0]))  # rood
 vis.add_geometry(sphere(left, [0, 0, 1]))  # blauw
-vis.add_geometry(sphere(tub_pt, [1, 0, 1]))  # paars
+vis.add_geometry(sphere(tub_pt, [1, 0, 1], 2.5))  # paars
 vis.add_geometry(sphere(deep_low, [1, 1, 0]))  # geel
 vis.add_geometry(sphere(deep_low_right, [0, 1, 1]))  # cyaan
 
@@ -198,7 +232,7 @@ colors = [[1, 0.5, 0], [0, 1, 0.5]]
 for i, pt in enumerate(selected_pts):
     vis.add_geometry(sphere(pt, colors[i]))
 if top_bol is not None:
-    vis.add_geometry(sphere(top_bol, [1, 0.5, 0]))  # oranje bovenste bol
+    vis.add_geometry(sphere(top_bol, [1, 0.5, 0]))
 
 opt = vis.get_render_option()
 opt.background_color = [0.05, 0.05, 0.05]
@@ -208,4 +242,3 @@ opt.point_size = 2
 vis.get_view_control().set_zoom(0.8)
 vis.run()
 vis.destroy_window()
-
