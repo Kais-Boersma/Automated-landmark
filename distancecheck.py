@@ -7,7 +7,7 @@ from scipy.spatial import cKDTree
 # =====================
 PLY_FILE = "bot270.ply"
 MANUAL_PLY = "landmarks270.ply"
-BONE_LENGTH_CM = 29.1
+BONE_LENGTH_CM = 27.0
 MIN_DIST_GEEL_CYAAN = 12.0
 
 # =====================
